@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/gemini/:path*",
+      "destination": "/api/gemini/[...path]"
+    }
+  ]
+}
