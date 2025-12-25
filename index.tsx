@@ -16,14 +16,21 @@ interface ImageData {
   dataUrl: string;
   width: number;
   height: number;
-  annotation: Annotation | null;
+  annotations: Annotation[];
 }
 
-const AnnotationEditor = ({ image, onAnnotate }: { image: ImageData; onAnnotate: (a: Annotation) => void }) => {
+const AnnotationEditor = ({ 
+  image, 
+  onAnnotate 
+}: { 
+  image: ImageData; 
+  onAnnotate: (a: Annotation) => void 
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPoint, setStartPoint] = useState({ x: 0, y: 0 });
+  const [currentDragRect, setCurrentDragRect] = useState<Annotation | null>(null);
 
   const getScaledCoords = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -44,17 +51,29 @@ const AnnotationEditor = ({ image, onAnnotate }: { image: ImageData; onAnnotate:
     const coords = getScaledCoords(event);
     setStartPoint(coords);
     setIsDrawing(true);
+    setCurrentDragRect({ x: coords.x, y: coords.y, width: 0, height: 0 });
   };
 
   const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawing) return;
     const endPoint = getScaledCoords(event);
-    draw(startPoint, endPoint);
+    
+    const newRect = {
+      x: Math.min(startPoint.x, endPoint.x),
+      y: Math.min(startPoint.y, endPoint.y),
+      width: Math.abs(startPoint.x - endPoint.x),
+      height: Math.abs(startPoint.y - endPoint.y),
+    };
+    
+    setCurrentDragRect(newRect);
+    draw(newRect);
   };
 
   const handleMouseUp = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawing) return;
     setIsDrawing(false);
+    setCurrentDragRect(null);
+    
     const endPoint = getScaledCoords(event);
     const annotation: Annotation = {
       x: Math.min(startPoint.x, endPoint.x),
@@ -62,45 +81,62 @@ const AnnotationEditor = ({ image, onAnnotate }: { image: ImageData; onAnnotate:
       width: Math.abs(startPoint.x - endPoint.x),
       height: Math.abs(startPoint.y - endPoint.y),
     };
-    onAnnotate(annotation);
+
+    // Ignore very small clicks
+    if (annotation.width > 5 && annotation.height > 5) {
+      onAnnotate(annotation);
+    } else {
+      // If valid click but too small, just redraw existing
+      draw(null);
+    }
   };
 
-  const draw = (start: { x: number; y: number }, end: { x: number; y: number }, annotation?: Annotation) => {
+  const draw = (currentRect: Annotation | null) => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!ctx || !canvas) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const rect = annotation || {
-      x: Math.min(start.x, end.x),
-      y: Math.min(start.y, end.y),
-      width: Math.abs(start.x - end.x),
-      height: Math.abs(start.y - end.y),
-    };
-
-    if (rect.width > 0 && rect.height > 0) {
-      ctx.strokeStyle = '#4a90e2';
-      ctx.lineWidth = 4;
-      ctx.setLineDash([10, 5]);
+    // Draw existing annotations
+    ctx.strokeStyle = '#4a90e2';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([]);
+    
+    image.annotations.forEach((rect, index) => {
       ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
-      ctx.setLineDash([]);
+      
+      // Add label
+      ctx.fillStyle = 'rgba(74, 144, 226, 0.2)';
+      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      
+      ctx.fillStyle = '#4a90e2';
+      ctx.font = '12px Arial';
+      ctx.fillText(`#${index + 1}`, rect.x + 2, rect.y + 14);
+    });
+
+    // Draw current dragging rectangle
+    if (currentRect && currentRect.width > 0 && currentRect.height > 0) {
+      ctx.strokeStyle = '#e24a4a';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeRect(currentRect.x, currentRect.y, currentRect.width, currentRect.height);
     }
   };
 
+  // Re-draw when annotations change
   useEffect(() => {
     const img = imageRef.current;
     const canvas = canvasRef.current;
+    
     if (img && canvas) {
       const setCanvasSize = () => {
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        if (image.annotation) {
-          draw({ x: 0, y: 0 }, { x: 0, y: 0 }, image.annotation);
-        } else {
-          const ctx = canvas.getContext('2d');
-          ctx?.clearRect(0, 0, canvas.width, canvas.height);
+        // Only set dimensions if they differ to avoid flickering/resetting
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
         }
+        draw(null);
       };
 
       if (img.complete) {
@@ -109,7 +145,7 @@ const AnnotationEditor = ({ image, onAnnotate }: { image: ImageData; onAnnotate:
         img.onload = setCanvasSize;
       }
     }
-  }, [image]);
+  }, [image.annotations, image.dataUrl]);
 
   return (
     <div className="annotation-editor">
@@ -119,7 +155,13 @@ const AnnotationEditor = ({ image, onAnnotate }: { image: ImageData; onAnnotate:
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={() => setIsDrawing(false)}
+        onMouseLeave={() => {
+          if (isDrawing) {
+            setIsDrawing(false);
+            setCurrentDragRect(null);
+            draw(null);
+          }
+        }}
       />
     </div>
   );
@@ -144,7 +186,7 @@ const App = () => {
           dataUrl,
           width: img.naturalWidth,
           height: img.naturalHeight,
-          annotation: null,
+          annotations: [],
         });
         setProcessedImageUrl(null);
         setError(null);
@@ -156,13 +198,31 @@ const App = () => {
 
   const handleAnnotate = (annotation: Annotation) => {
     if (sourceImage) {
-      setSourceImage({ ...sourceImage, annotation });
+      setSourceImage({ 
+        ...sourceImage, 
+        annotations: [...sourceImage.annotations, annotation] 
+      });
+    }
+  };
+
+  const handleUndo = () => {
+    if (sourceImage && sourceImage.annotations.length > 0) {
+      setSourceImage({
+        ...sourceImage,
+        annotations: sourceImage.annotations.slice(0, -1)
+      });
+    }
+  };
+
+  const handleClear = () => {
+    if (sourceImage) {
+      setSourceImage({ ...sourceImage, annotations: [] });
     }
   };
 
   const handleRemoveWatermark = async () => {
-    if (!sourceImage || !sourceImage.annotation) {
-      setError('请先上传图片并标记水印区域');
+    if (!sourceImage || sourceImage.annotations.length === 0) {
+      setError('请先上传图片并至少框选一个水印区域');
       return;
     }
 
@@ -171,14 +231,22 @@ const App = () => {
     setError(null);
 
     try {
-      const { annotation, dataUrl } = sourceImage;
+      const { annotations, dataUrl } = sourceImage;
       const base64Data = dataUrl.split(',')[1];
 
-      const prompt = `You are an image inpainting tool. I have marked a rectangular region in this image that contains unwanted text/logo overlay. The marked region is at pixel coordinates: top-left corner (${Math.round(annotation.x)}, ${Math.round(annotation.y)}), size ${Math.round(annotation.width)}x${Math.round(annotation.height)} pixels.
+      // Construct a description for multiple regions
+      const regionsDescription = annotations.map((a, i) => 
+        `Region ${i + 1}: top-left (${Math.round(a.x)}, ${Math.round(a.y)}), size ${Math.round(a.width)}x${Math.round(a.height)}`
+      ).join('\n');
 
-Please generate a new version of this EXACT same image with the SAME dimensions, but with the content inside that marked rectangle replaced by a natural continuation of the surrounding background. The rest of the image must remain EXACTLY the same. Output only the edited image.`;
+      const prompt = `Find the following regions in the image:
+${regionsDescription}
 
-      const response = await fetch('/api/gemini/v1beta/models/gemini-2.5-flash-image:generateContent', {
+Remove the text, logo, or unwanted object inside THESE regions and inpaint them to match the surrounding background seamlessly.
+Do not modify any other parts of the image.
+Output ONLY the final image with the watermarks removed.`;
+
+      const response = await fetch('/api/gemini/v1beta/models/gemini-2.0-flash-exp:generateContent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -229,12 +297,12 @@ Please generate a new version of this EXACT same image with the SAME dimensions,
     }
   };
 
-  const isProcessDisabled = !sourceImage?.annotation || isLoading;
+  const isProcessDisabled = !sourceImage?.annotations.length || isLoading;
 
   return (
     <div className="container">
       <h1>图片水印移除工具</h1>
-      <p className="description">上传图片，标记水印区域，AI 自动移除水印</p>
+      <p className="description">上传图片，框选一个或多个水印区域，AI 自动移除</p>
 
       <div className="controls">
         <div className="input-group">
@@ -244,13 +312,31 @@ Please generate a new version of this EXACT same image with the SAME dimensions,
 
         {sourceImage && (
           <div className="input-group">
-            <label>2. 在图片上框选水印区域</label>
+            <div className="annotation-header">
+              <label>2. 框选水印 (已选: {sourceImage.annotations.length})</label>
+              <div className="annotation-actions">
+                <button 
+                  onClick={handleUndo} 
+                  disabled={sourceImage.annotations.length === 0 || isLoading}
+                  className="secondary-btn"
+                >
+                  撤销
+                </button>
+                <button 
+                  onClick={handleClear} 
+                  disabled={sourceImage.annotations.length === 0 || isLoading}
+                  className="secondary-btn"
+                >
+                  清除所有
+                </button>
+              </div>
+            </div>
             <AnnotationEditor image={sourceImage} onAnnotate={handleAnnotate} />
           </div>
         )}
 
-        <button onClick={handleRemoveWatermark} disabled={isProcessDisabled}>
-          {isLoading ? '处理中...' : '3. 移除水印'}
+        <button onClick={handleRemoveWatermark} disabled={isProcessDisabled} className="primary-btn">
+          {isLoading ? '处理中...' : `3. 移除 ${sourceImage?.annotations.length || 0} 个水印`}
         </button>
       </div>
 
@@ -269,9 +355,11 @@ Please generate a new version of this EXACT same image with the SAME dimensions,
             <h2>处理结果</h2>
             <div className="processed-output">
               <img src={processedImageUrl} alt="Processed" style={{ maxWidth: '100%' }} />
-              <a href={processedImageUrl} download="no-watermark.png" className="download-button">
-                下载图片
-              </a>
+              <div className="result-actions">
+                <a href={processedImageUrl} download="no-watermark.png" className="download-button">
+                  下载图片
+                </a>
+              </div>
             </div>
           </div>
         </div>
