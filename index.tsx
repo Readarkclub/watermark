@@ -246,7 +246,7 @@ Remove the text, logo, or unwanted object inside THESE regions and inpaint them 
 Do not modify any other parts of the image.
 Output ONLY the final image with the watermarks removed.`;
 
-      const response = await fetch('/api/gemini/v1beta/models/gemini-2.0-flash-exp:generateContent', {
+      const response = await fetch('/api/gemini/v1beta/models/gemini-3-pro-image-preview:generateContent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
