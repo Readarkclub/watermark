@@ -22,6 +22,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1gQseFHvBpjSK3Lj_OisQln
 ## Deploy to Vercel
 
 1. Import the repository to Vercel
-2. Add environment variable in Vercel project settings:
-   - `GEMINI_API_KEY`: Your Google Gemini API key
+2. Configure your Gemini API key injection:
+   - Default: `api/gemini/[...path].ts` proxies to `https://readark.club/api` (Cloudflare Worker) which injects the key
+   - Alternative: change the proxy to call `https://generativelanguage.googleapis.com` directly and set `GEMINI_API_KEY` in Vercel
 3. Deploy

@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// Cloudflare Worker 代理地址
+// Cloudflare Worker 代理地址（Worker 侧会注入 API Key）
 const CLOUDFLARE_PROXY = 'https://readark.club/api';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -27,7 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const pathSegments = req.query.path;
   const apiPath = Array.isArray(pathSegments) ? pathSegments.join('/') : pathSegments || '';
 
-  // 转发到 Cloudflare Worker 代理，Worker 会自动添加 API Key
+  // 转发到 Cloudflare Worker 代理（Worker 会自动添加 API Key）
   const targetUrl = `${CLOUDFLARE_PROXY}/${apiPath}`;
 
   try {
@@ -39,7 +39,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body: JSON.stringify(req.body),
     });
 
-    const data = await response.json();
+    const raw = await response.text();
+    const data = (() => {
+      if (!raw) return {};
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return { error: { message: raw } };
+      }
+    })();
 
     if (!response.ok) {
       return res.status(response.status).json(data);

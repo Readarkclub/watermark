@@ -19,6 +19,15 @@ interface ImageData {
   annotations: Annotation[];
 }
 
+type RepairMode = 'blemish' | 'scratch' | 'object' | 'cleanup';
+
+const REPAIR_MODES: Array<{ value: RepairMode; label: string; hint: string }> = [
+  { value: 'blemish', label: '去瑕疵/污渍', hint: '适合痘痘、斑点、灰尘、污渍、小脏点' },
+  { value: 'scratch', label: '修复划痕/破损', hint: '适合划痕、撕裂、缺口、老照片修复' },
+  { value: 'object', label: '移除小物体', hint: '适合电线、小路人、杂物等（越小越好）' },
+  { value: 'cleanup', label: '背景清理', hint: '适合清理局部遮挡并自然补全背景' },
+];
+
 const AnnotationEditor = ({ 
   image, 
   onAnnotate 
@@ -172,6 +181,8 @@ const App = () => {
   const [processedImageUrl, setProcessedImageUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repairMode, setRepairMode] = useState<RepairMode>('blemish');
+  const [regionNote, setRegionNote] = useState('');
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -220,9 +231,9 @@ const App = () => {
     }
   };
 
-  const handleRemoveWatermark = async () => {
+  const handleInpaint = async () => {
     if (!sourceImage || sourceImage.annotations.length === 0) {
-      setError('请先上传图片并至少框选一个水印区域');
+      setError('请先上传图片并至少框选一个修复区域');
       return;
     }
 
@@ -232,6 +243,8 @@ const App = () => {
 
     try {
       const { annotations, dataUrl } = sourceImage;
+      const inputMimeTypeMatch = dataUrl.match(/^data:(.*?);base64,/);
+      const inputMimeType = inputMimeTypeMatch?.[1] || 'image/jpeg';
       const base64Data = dataUrl.split(',')[1];
 
       // Construct a description for multiple regions
@@ -239,12 +252,29 @@ const App = () => {
         `Region ${i + 1}: top-left (${Math.round(a.x)}, ${Math.round(a.y)}), size ${Math.round(a.width)}x${Math.round(a.height)}`
       ).join('\n');
 
+      const modeInstruction: Record<RepairMode, string> = {
+        blemish:
+          'Remove small blemishes, stains, dust specks, acne, or minor imperfections inside the regions. Preserve natural texture; do not over-smooth.',
+        scratch:
+          'Repair scratches/tears/damage inside the regions by reconstructing missing texture and structure consistent with the surrounding area.',
+        object:
+          'Remove the small unwanted object inside the regions and inpaint the background to match the surroundings seamlessly.',
+        cleanup:
+          'Clean up the marked regions and inpaint them to look natural and consistent with the surrounding background.',
+      };
+
+      const note = regionNote.trim();
+      const noteLine = note ? `User note about what to remove: ${note}\n` : '';
+
       const prompt = `Find the following regions in the image:
 ${regionsDescription}
 
-Remove the text, logo, or unwanted object inside THESE regions and inpaint them to match the surrounding background seamlessly.
+You are an image restoration and inpainting tool.
+${noteLine}${modeInstruction[repairMode]}
+Work ONLY inside the specified regions.
 Do not modify any other parts of the image.
-Output ONLY the final image with the watermarks removed.`;
+Do not remove or alter watermarks, logos, signatures, or copyright notices. If the marked area appears to contain any of those, reply with text only explaining you can't help.
+Output ONLY the final image.`;
 
       const response = await fetch('/api/gemini/v1beta/models/gemini-3-pro-image-preview:generateContent', {
         method: 'POST',
@@ -253,10 +283,10 @@ Output ONLY the final image with the watermarks removed.`;
           contents: [{
             parts: [
               { text: prompt },
-              { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+              { inlineData: { mimeType: inputMimeType, data: base64Data } },
             ],
           }],
-          generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+          generationConfig: { responseModalities: ['TEXT', 'IMAGE'], temperature: 0.2 },
         }),
       });
 
@@ -289,6 +319,8 @@ Output ONLY the final image with the watermarks removed.`;
         setError('API 配额已用完，请稍后重试');
       } else if (message.includes('401') || message.includes('403') || message.includes('API_KEY')) {
         setError('API 密钥无效，请检查配置');
+      } else if (/watermark|logo|signature|copyright/i.test(message) || /水印|去水印|logo|签名|版权/i.test(message)) {
+        setError('模型拒绝处理：无法用于去除水印/Logo/版权标识。请改用合规用途（如去瑕疵、移除小物体、修复破损等）。');
       } else {
         setError(`错误: ${message}`);
       }
@@ -301,8 +333,8 @@ Output ONLY the final image with the watermarks removed.`;
 
   return (
     <div className="container">
-      <h1>图片水印移除工具</h1>
-      <p className="description">上传图片，框选一个或多个水印区域，AI 自动移除</p>
+      <h1>图片修复/去瑕疵工具</h1>
+      <p className="description">上传图片，框选需要修复的区域，选择修复模式并可补充说明（不支持去水印/Logo/版权标识）。</p>
 
       <div className="controls">
         <div className="input-group">
@@ -312,8 +344,35 @@ Output ONLY the final image with the watermarks removed.`;
 
         {sourceImage && (
           <div className="input-group">
+            <label>2. 修复模式</label>
+            <select
+              value={repairMode}
+              onChange={(e) => setRepairMode(e.target.value as RepairMode)}
+              disabled={isLoading}
+            >
+              {REPAIR_MODES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <p className="hint">{REPAIR_MODES.find((m) => m.value === repairMode)?.hint}</p>
+
+            <label>3. 可选说明（会影响修复结果）</label>
+            <textarea
+              value={regionNote}
+              onChange={(e) => setRegionNote(e.target.value)}
+              disabled={isLoading}
+              placeholder="例如：去掉脸上的痘痘/黑点；修复划痕；移除小电线；修补破损区域…"
+              rows={3}
+            />
+          </div>
+        )}
+
+        {sourceImage && (
+          <div className="input-group">
             <div className="annotation-header">
-              <label>2. 框选水印 (已选: {sourceImage.annotations.length})</label>
+              <label>4. 框选修复区域 (已选: {sourceImage.annotations.length})</label>
               <div className="annotation-actions">
                 <button 
                   onClick={handleUndo} 
@@ -335,8 +394,8 @@ Output ONLY the final image with the watermarks removed.`;
           </div>
         )}
 
-        <button onClick={handleRemoveWatermark} disabled={isProcessDisabled} className="primary-btn">
-          {isLoading ? '处理中...' : `3. 移除 ${sourceImage?.annotations.length || 0} 个水印`}
+        <button onClick={handleInpaint} disabled={isProcessDisabled} className="primary-btn">
+          {isLoading ? '处理中...' : `5. 修复 ${sourceImage?.annotations.length || 0} 个区域`}
         </button>
       </div>
 
@@ -356,7 +415,7 @@ Output ONLY the final image with the watermarks removed.`;
             <div className="processed-output">
               <img src={processedImageUrl} alt="Processed" style={{ maxWidth: '100%' }} />
               <div className="result-actions">
-                <a href={processedImageUrl} download="no-watermark.png" className="download-button">
+                <a href={processedImageUrl} download="result.png" className="download-button">
                   下载图片
                 </a>
               </div>

@@ -1,5 +1,5 @@
 {
-  "name": "Remove watermark",
-  "description": "Example React app using Gemini",
+  "name": "Image inpainting",
+  "description": "Example React app using Gemini for inpainting (not for watermark removal)",
   "requestFramePermissions": []
 }

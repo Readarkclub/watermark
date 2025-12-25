@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-基于 React + Vite + TypeScript 的视频水印移除工具。使用 Google Gemini 2.5 Flash 模型通过 AI 识别和移除视频帧中的水印。
+基于 React + Vite + TypeScript 的图片局部修复（inpainting）工具：上传图片、选择修复模式、框选需要修复的区域，让 Gemini 生成修复后的图像（如去瑕疵、修复划痕、移除小物体）。
+
+注意：Gemini 可能会拒绝涉及去除水印/Logo/签名/版权标识的请求，本项目不以此为用途。
 
 ## Development Commands
 
@@ -28,26 +30,19 @@ npm run preview  # 预览生产构建
 - `getScaledCoords()` 处理画布显示尺寸与原始图像像素的坐标映射
 
 **App 主组件** (`index.tsx:135+`)
-- 工作流：上传视频 → 捕获帧 → 标注水印区域 → AI 处理 → 显示/下载结果
+- 工作流：上传图片 → 标注修复区域 → AI 处理 → 显示/下载结果
 
-### API 集成 (`handleRemoveWatermark`)
+### API 集成 (`handleInpaint`)
 
-使用 `@google/genai` SDK 直接调用 Google Gemini API：
-```typescript
-import { GoogleGenAI, Modality } from '@google/genai';
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-```
+前端通过 `fetch('/api/gemini/...')` 调用代理接口，再由代理转发到 Gemini/Cloudflare Worker。
 
-模型：`gemini-2.5-flash-preview-05-20`，使用 `responseModalities: [Modality.IMAGE, Modality.TEXT]` 返回处理后的图像。
+模型：当前使用 `gemini-3-pro-image-preview:generateContent`，并请求 `responseModalities: ['TEXT', 'IMAGE']`。
 
-响应结构：`response.candidates[0].content.parts` 中的 `inlineData.data` 包含 base64 图像数据。
-
-### 视频生成 (`generateVideoFromImage`)
-
-将静态图像转换为 1 秒 WebM 视频用于展示，使用 MediaRecorder API 录制 Canvas 流。
+响应结构：`candidates[0].content.parts` 中的 `inlineData.data` 包含 base64 图像数据。
 
 ## Important Notes
 
 - 无测试配置
-- 环境变量通过 Vite `define` 在构建时注入（非运行时）
+- 本地开发：`vite.config.ts` 会将 `GEMINI_API_KEY` 注入到代理请求的 query string
+- 生产环境：`api/gemini/[...path].ts` 当前转发到 Cloudflare Worker（由 Worker 注入 API Key）
 - 路径别名：`@` → 项目根目录
